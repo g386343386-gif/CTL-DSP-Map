@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CTL DSP ZIP / Route Interactive Map</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+:root {
+  --bg:#f6f7fb; --panel:#fff; --text:#172033; --muted:#667085; --line:#e5e7eb;
+}
+* { box-sizing:border-box; }
+body { margin:0; font-family:Inter,Segoe UI,Arial,"Microsoft YaHei",sans-serif; color:var(--text); background:var(--bg); }
+header { background:#fff; border-bottom:1px solid var(--line); padding:16px 20px; }
+h1 { margin:0 0 5px; font-size:22px; }
+.sub { color:var(--muted); font-size:13px; }
+.layout { display:grid; grid-template-columns:300px 1fr; min-height:calc(100vh - 75px); }
+aside { background:#fff; border-right:1px solid var(--line); padding:16px; overflow:auto; }
+#map { min-height:720px; height:calc(100vh - 75px); }
+.section-title { font-weight:700; margin:4px 0 10px; }
+.dsp-btn { width:100%; display:flex; align-items:center; gap:9px; padding:10px 9px; margin:5px 0;
+ border:1px solid var(--line); background:#fff; border-radius:9px; cursor:pointer; text-align:left; }
+.dsp-btn:hover,.dsp-btn.active { background:#f2f4f7; border-color:#98a2b3; }
+.dot { width:13px;height:13px;border-radius:50%; flex:0 0 auto; }
+.controls { display:flex; gap:7px; margin:10px 0 16px; }
+.controls button { flex:1; border:1px solid var(--line); background:#fff; border-radius:8px; padding:8px; cursor:pointer; }
+.legend-note { color:var(--muted); font-size:12px; line-height:1.45; margin-top:14px; }
+.route-label {
+  background:rgba(255,255,255,.92); border:1px solid #344054; color:#101828;
+  font-weight:800; border-radius:5px; padding:1px 4px; box-shadow:none; white-space:nowrap;
+}
+.route-label:before { display:none; }
+.info { padding:10px 12px; min-width:220px; line-height:1.45; }
+.info b { font-size:14px; }
+.status { margin-top:14px; padding:10px; border-radius:8px; background:#f8fafc; color:#475467; font-size:12px; }
+.search { width:100%; border:1px solid var(--line); border-radius:8px; padding:9px 10px; margin-bottom:10px; }
+@media(max-width:760px) {
+  .layout { grid-template-columns:1fr; }
+  aside { border-right:0; border-bottom:1px solid var(--line); }
+  #map { height:70vh; min-height:520px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>CTL DSP ZIP / Route Interactive Map</h1>
+  <div class="sub">ZIP 区域边界 · DSP 颜色区分 · Route 直接标注 · DSP 单独筛选</div>
+</header>
+<div class="layout">
+<aside>
+  <input id="search" class="search" placeholder="搜索 ZIP / Route / DSP">
+  <div class="section-title">DSP Filter</div>
+  <div class="controls"><button id="showAll">显示全部</button><button id="fitAll">缩放全部</button></div>
+  <div id="dspList"></div>
+  <div id="status" class="status">正在加载地图和 Census ZIP 区域边界…</div>
+  <div class="legend-note">
+    边界使用 U.S. Census Bureau 2020 ZCTA（ZIP Code Tabulation Area）公开地理数据。
+    ZCTA 是 ZIP Code 的统计区域近似，不等同于 USPS 官方投递边界。
+  </div>
+</aside>
+<div id="map"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const records = [{"id": 2134, "route": "A01", "zip": "28204", "city": "Charlotte - Midtown", "count": 1, "sorting": "ATL-CTL-A01", "dsp": "ATL-CTL-MJXY", "difficulty": "High", "reason": "公寓 / Office / 门禁或商业建筑较多"}, {"id": 2135, "route": "A02", "zip": "28207", "city": "Charlotte - Myers Park", "count": 1, "sorting": "ATL-CTL-A02", "dsp": "ATL-CTL-MJXY", "difficulty": "High", "reason": "公寓 / Office / 门禁或商业建筑较多"}, {"id": 2136, "route": "A03", "zip": "28211", "city": "Charlotte - Cotswold", "count": 1, "sorting": "ATL-CTL-A03", "dsp": "ATL-CTL-MJXY", "difficulty": "Medium", "reason": "公寓和商业建筑混合，部分区域配送较慢"}, {"id": 2523, "route": "A030", "zip": "28110", "city": "Monroe", "count": 1, "sorting": "ATL-CTL-A030", "dsp": "ATL-CTL-MJXY", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 3565, "route": "A031", "zip": "28112", "city": "Monroe / Waxhaw / Lancaster", "count": 3, "sorting": "ATL-CTL-A031", "dsp": "ATL-CTL-PFC", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 3565, "route": "A031", "zip": "28173", "city": "Monroe / Waxhaw / Lancaster", "count": 3, "sorting": "ATL-CTL-A031", "dsp": "ATL-CTL-PFC", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 3565, "route": "A031", "zip": "29720", "city": "Monroe / Waxhaw / Lancaster", "count": 3, "sorting": "ATL-CTL-A031", "dsp": "ATL-CTL-PFC", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 2137, "route": "A04", "zip": "28205", "city": "Charlotte - East / Plaza Midwood", "count": 1, "sorting": "ATL-CTL-A04", "dsp": "ATL-CTL-MJXY", "difficulty": "Medium", "reason": "公寓和商业建筑混合，部分区域配送较慢"}, {"id": 2138, "route": "A05", "zip": "28212", "city": "Charlotte - East", "count": 1, "sorting": "ATL-CTL-A05", "dsp": "ATL-CTL-MJXY", "difficulty": "Medium", "reason": "公寓和商业建筑混合，部分区域配送较慢"}, {"id": 2139, "route": "A10", "zip": "28226", "city": "Charlotte - South", "count": 1, "sorting": "ATL-CTL-A10", "dsp": "ATL-CTL-OSHI", "difficulty": "Medium", "reason": "公寓和商业建筑混合，部分区域配送较慢"}, {"id": 2140, "route": "A11", "zip": "28277", "city": "Charlotte - Ballantyne", "count": 1, "sorting": "ATL-CTL-A11", "dsp": "ATL-CTL-PFC", "difficulty": "Medium", "reason": "公寓和商业建筑混合，部分区域配送较慢"}, {"id": 2141, "route": "A12", "zip": "28270", "city": "Charlotte - Southeast", "count": 1, "sorting": "ATL-CTL-A12", "dsp": "ATL-CTL-MJXY", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 2142, "route": "A13", "zip": "28105", "city": "Matthews", "count": 1, "sorting": "ATL-CTL-A13", "dsp": "ATL-CTL-MJXY", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 2143, "route": "A20", "zip": "28215", "city": "Charlotte - East", "count": 1, "sorting": "ATL-CTL-A20", "dsp": "ATL-CTL-MJXY", "difficulty": "Medium", "reason": "公寓和商业建筑混合，部分区域配送较慢"}, {"id": 2144, "route": "A21", "zip": "28227", "city": "Mint Hill", "count": 1, "sorting": "ATL-CTL-A21", "dsp": "ATL-CTL-MJXY", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 2145, "route": "A22", "zip": "28079", "city": "Indian Trail", "count": 1, "sorting": "ATL-CTL-A22", "dsp": "ATL-CTL-MJXY", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 2146, "route": "A23", "zip": "28104", "city": "Matthews / Weddington", "count": 1, "sorting": "ATL-CTL-A23", "dsp": "ATL-CTL-MJXY", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 2147, "route": "B01", "zip": "28206", "city": "Charlotte - North", "count": 1, "sorting": "ATL-CTL-B01", "dsp": "ATL-CTL-ROBUST", "difficulty": "High", "reason": "公寓 / Office / 门禁或商业建筑较多"}, {"id": 2148, "route": "B02", "zip": "28213", "city": "Charlotte - University City", "count": 1, "sorting": "ATL-CTL-B02", "dsp": "ATL-CTL-G1", "difficulty": "Medium", "reason": "公寓和商业建筑混合，部分区域配送较慢"}, {"id": 2524, "route": "B026", "zip": "28052", "city": "Gastonia / Lowell", "count": 4, "sorting": "ATL-CTL-B026", "dsp": "ATL-CTL-G1", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 2524, "route": "B026", "zip": "28054", "city": "Gastonia / Lowell", "count": 4, "sorting": "ATL-CTL-B026", "dsp": "ATL-CTL-G1", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 2524, "route": "B026", "zip": "28056", "city": "Gastonia / Lowell", "count": 4, "sorting": "ATL-CTL-B026", "dsp": "ATL-CTL-G1", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 2524, "route": "B026", "zip": "28098", "city": "Gastonia / Lowell", "count": 4, "sorting": "ATL-CTL-B026", "dsp": "ATL-CTL-G1", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 2149, "route": "B03", "zip": "28262", "city": "Charlotte - University City", "count": 1, "sorting": "ATL-CTL-B03", "dsp": "ATL-CTL-MJXY", "difficulty": "Medium", "reason": "公寓和商业建筑混合，部分区域配送较慢"}, {"id": 2525, "route": "B030", "zip": "28025", "city": "Concord / Harrisburg", "count": 3, "sorting": "ATL-CTL-B030", "dsp": "ATL-CTL-MJXY", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 2525, "route": "B030", "zip": "28027", "city": "Concord / Harrisburg", "count": 3, "sorting": "ATL-CTL-B030", "dsp": "ATL-CTL-MJXY", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 2525, "route": "B030", "zip": "28075", "city": "Concord / Harrisburg", "count": 3, "sorting": "ATL-CTL-B030", "dsp": "ATL-CTL-MJXY", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 2526, "route": "B031", "zip": "28023", "city": "China Grove / Kannapolis / Landis", "count": 4, "sorting": "ATL-CTL-B031", "dsp": "ATL-CTL-MJXY", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 2526, "route": "B031", "zip": "28081", "city": "China Grove / Kannapolis / Landis", "count": 4, "sorting": "ATL-CTL-B031", "dsp": "ATL-CTL-MJXY", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 2526, "route": "B031", "zip": "28083", "city": "China Grove / Kannapolis / Landis", "count": 4, "sorting": "ATL-CTL-B031", "dsp": "ATL-CTL-MJXY", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 2526, "route": "B031", "zip": "28088", "city": "China Grove / Kannapolis / Landis", "count": 4, "sorting": "ATL-CTL-B031", "dsp": "ATL-CTL-MJXY", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 2527, "route": "B032", "zip": "28031", "city": "Cornelius / Davidson / Mooresville", "count": 4, "sorting": "ATL-CTL-B032", "dsp": "ATL-CTL-MJXY", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 2527, "route": "B032", "zip": "28036", "city": "Cornelius / Davidson / Mooresville", "count": 4, "sorting": "ATL-CTL-B032", "dsp": "ATL-CTL-MJXY", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 2527, "route": "B032", "zip": "28115", "city": "Cornelius / Davidson / Mooresville", "count": 4, "sorting": "ATL-CTL-B032", "dsp": "ATL-CTL-MJXY", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 2527, "route": "B032", "zip": "28117", "city": "Cornelius / Davidson / Mooresville", "count": 4, "sorting": "ATL-CTL-B032", "dsp": "ATL-CTL-MJXY", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 3566, "route": "B033", "zip": "28166", "city": "Troutman / Statesville", "count": 3, "sorting": "ATL-CTL-B033", "dsp": "ATL-CTL-MJXY", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 3566, "route": "B033", "zip": "28625", "city": "Troutman / Statesville", "count": 3, "sorting": "ATL-CTL-B033", "dsp": "ATL-CTL-MJXY", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 3566, "route": "B033", "zip": "28677", "city": "Troutman / Statesville", "count": 3, "sorting": "ATL-CTL-B033", "dsp": "ATL-CTL-MJXY", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 2150, "route": "B04", "zip": "28269", "city": "Charlotte - North", "count": 1, "sorting": "ATL-CTL-B04", "dsp": "ATL-CTL-LIOQ", "difficulty": "Medium", "reason": "公寓和商业建筑混合，部分区域配送较慢"}, {"id": 2151, "route": "B10", "zip": "28208", "city": "Charlotte - West", "count": 1, "sorting": "ATL-CTL-B10", "dsp": "ATL-CTL-LIOQ", "difficulty": "High", "reason": "公寓 / Office / 门禁或商业建筑较多"}, {"id": 2152, "route": "B11", "zip": "28216", "city": "Charlotte - Northwest", "count": 1, "sorting": "ATL-CTL-B11", "dsp": "ATL-CTL-LIOQ", "difficulty": "Medium", "reason": "公寓和商业建筑混合，部分区域配送较慢"}, {"id": 2153, "route": "B12", "zip": "28078", "city": "Huntersville", "count": 1, "sorting": "ATL-CTL-B12", "dsp": "ATL-CTL-OSHI", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 2154, "route": "B20", "zip": "28214", "city": "Charlotte - West", "count": 1, "sorting": "ATL-CTL-B20", "dsp": "ATL-CTL-LIOQ", "difficulty": "Medium", "reason": "公寓和商业建筑混合，部分区域配送较慢"}, {"id": 2155, "route": "B21", "zip": "28120", "city": "Mount Holly", "count": 1, "sorting": "ATL-CTL-B21", "dsp": "ATL-CTL-G1", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 2157, "route": "B23", "zip": "28278", "city": "Charlotte - Southwest", "count": 2, "sorting": "ATL-CTL-B23", "dsp": "ATL-CTL-G1", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 2157, "route": "B23", "zip": "28012", "city": "Charlotte - Southwest", "count": 2, "sorting": "ATL-CTL-B23", "dsp": "ATL-CTL-G1", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 2158, "route": "B24", "zip": "28032", "city": "Cramerton", "count": 1, "sorting": "ATL-CTL-B24", "dsp": "ATL-CTL-ROBUST", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 2159, "route": "B25", "zip": "28101", "city": "McAdenville", "count": 1, "sorting": "ATL-CTL-B25", "dsp": "ATL-CTL-ROBUST", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 2160, "route": "C01", "zip": "28203", "city": "Charlotte - South End", "count": 1, "sorting": "ATL-CTL-C01", "dsp": "ATL-CTL-MJXY", "difficulty": "High", "reason": "公寓 / Office / 门禁或商业建筑较多"}, {"id": 2161, "route": "C02", "zip": "28209", "city": "Charlotte - South", "count": 1, "sorting": "ATL-CTL-C02", "dsp": "ATL-CTL-MJXY", "difficulty": "High", "reason": "公寓 / Office / 门禁或商业建筑较多"}, {"id": 2528, "route": "C023", "zip": "29730", "city": "Rock Hill", "count": 1, "sorting": "ATL-CTL-C023", "dsp": "ATL-CTL-G1", "difficulty": "Medium", "reason": "公寓和商业建筑混合，部分区域配送较慢"}, {"id": 2162, "route": "C03", "zip": "28210", "city": "Charlotte - South", "count": 1, "sorting": "ATL-CTL-C03", "dsp": "ATL-CTL-OSHI", "difficulty": "High", "reason": "公寓 / Office / 门禁或商业建筑较多"}, {"id": 2163, "route": "C10", "zip": "28217", "city": "Charlotte - Southwest / Airport", "count": 1, "sorting": "ATL-CTL-C10", "dsp": "ATL-CTL-MJXY", "difficulty": "High", "reason": "公寓 / Office / 门禁或商业建筑较多"}, {"id": 2164, "route": "C11", "zip": "28273", "city": "Charlotte - Southwest", "count": 1, "sorting": "ATL-CTL-C11", "dsp": "ATL-CTL-OSHI", "difficulty": "Medium", "reason": "公寓和商业建筑混合，部分区域配送较慢"}, {"id": 2165, "route": "C12", "zip": "28134", "city": "Pineville", "count": 1, "sorting": "ATL-CTL-C12", "dsp": "ATL-CTL-MJXY", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 2166, "route": "C20", "zip": "29708", "city": "Fort Mill", "count": 1, "sorting": "ATL-CTL-C20", "dsp": "ATL-CTL-LIOQ", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 2167, "route": "C21", "zip": "29707", "city": "Indian Land", "count": 1, "sorting": "ATL-CTL-C21", "dsp": "ATL-CTL-LIOQ", "difficulty": "Medium", "reason": "公寓和商业建筑混合，部分区域配送较慢"}, {"id": 2168, "route": "C22", "zip": "29715", "city": "Fort Mill", "count": 1, "sorting": "ATL-CTL-C22", "dsp": "ATL-CTL-LIOQ", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 2169, "route": "C23", "zip": "29732", "city": "Rock Hill", "count": 1, "sorting": "ATL-CTL-C23", "dsp": "ATL-CTL-G1", "difficulty": "Medium", "reason": "公寓和商业建筑混合，部分区域配送较慢"}, {"id": 3567, "route": "C24", "zip": "29710", "city": "Clover / York", "count": 2, "sorting": "ATL-CTL-C24", "dsp": "ATL-CTL-OSHI", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 3567, "route": "C24", "zip": "29745", "city": "Clover / York", "count": 2, "sorting": "ATL-CTL-C24", "dsp": "ATL-CTL-OSHI", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 3568, "route": "F01", "zip": "28037", "city": "Denver / Iron Station", "count": 3, "sorting": "ATL-CTL-F01", "dsp": "ATL-CTL-MJXY", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 3568, "route": "F01", "zip": "28080", "city": "Denver / Iron Station", "count": 3, "sorting": "ATL-CTL-F01", "dsp": "ATL-CTL-MJXY", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 3568, "route": "F01", "zip": "28164", "city": "Denver / Iron Station", "count": 3, "sorting": "ATL-CTL-F01", "dsp": "ATL-CTL-MJXY", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 3569, "route": "F02", "zip": "28016", "city": "Bessemer City / Dallas / Lincolnton", "count": 3, "sorting": "ATL-CTL-F02", "dsp": "ATL-CTL-G1", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 3569, "route": "F02", "zip": "28034", "city": "Bessemer City / Dallas / Lincolnton", "count": 3, "sorting": "ATL-CTL-F02", "dsp": "ATL-CTL-G1", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 3569, "route": "F02", "zip": "28092", "city": "Bessemer City / Dallas / Lincolnton", "count": 3, "sorting": "ATL-CTL-F02", "dsp": "ATL-CTL-G1", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 3570, "route": "F03", "zip": "28021", "city": "Cherryville / Kings Mountain / Shelby", "count": 4, "sorting": "ATL-CTL-F03", "dsp": "ATL-CTL-G1", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 3570, "route": "F03", "zip": "28086", "city": "Cherryville / Kings Mountain / Shelby", "count": 4, "sorting": "ATL-CTL-F03", "dsp": "ATL-CTL-G1", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 3570, "route": "F03", "zip": "28150", "city": "Cherryville / Kings Mountain / Shelby", "count": 4, "sorting": "ATL-CTL-F03", "dsp": "ATL-CTL-G1", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 3570, "route": "F03", "zip": "28152", "city": "Cherryville / Kings Mountain / Shelby", "count": 4, "sorting": "ATL-CTL-F03", "dsp": "ATL-CTL-G1", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 3571, "route": "GS01", "zip": "28144", "city": "Salisbury", "count": 3, "sorting": "ATL-CTL-GS01", "dsp": "ATL-CTL-PFC", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 3571, "route": "GS01", "zip": "28146", "city": "Salisbury", "count": 3, "sorting": "ATL-CTL-GS01", "dsp": "ATL-CTL-PFC", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}, {"id": 3571, "route": "GS01", "zip": "28147", "city": "Salisbury", "count": 3, "sorting": "ATL-CTL-GS01", "dsp": "ATL-CTL-PFC", "difficulty": "Low", "reason": "以郊区住宅 / 独栋住宅为主"}];
+const allZips = ["28012", "28016", "28021", "28023", "28025", "28027", "28031", "28032", "28034", "28036", "28037", "28052", "28054", "28056", "28075", "28078", "28079", "28080", "28081", "28083", "28086", "28088", "28092", "28098", "28101", "28104", "28105", "28110", "28112", "28115", "28117", "28120", "28134", "28144", "28146", "28147", "28150", "28152", "28164", "28166", "28173", "28203", "28204", "28205", "28206", "28207", "28208", "28209", "28210", "28211", "28212", "28213", "28214", "28215", "28216", "28217", "28226", "28227", "28262", "28269", "28270", "28273", "28277", "28278", "28625", "28677", "29707", "29708", "29710", "29715", "29720", "29730", "29732", "29745"];
+const dsps = ["ATL-CTL-G1", "ATL-CTL-LIOQ", "ATL-CTL-MJXY", "ATL-CTL-OSHI", "ATL-CTL-PFC", "ATL-CTL-ROBUST"];
+const palette = ["#2563eb","#dc2626","#16a34a","#9333ea","#ea580c","#0891b2","#be123c","#4f46e5"];
+const colors = Object.fromEntries(dsps.map((d,i)=>[d,palette[i%palette.length]]));
+const byZip = {};
+records.forEach(r => { if(!byZip[r.zip]) byZip[r.zip]=[]; byZip[r.zip].push(r); });
+
+const map = L.map("map", {zoomControl:true}).setView([35.15,-80.84], 8);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom:19, attribution:'&copy; OpenStreetMap contributors'
+}).addTo(map);
+
+let geoLayer = null;
+let selectedDSP = null;
+let allBounds = null;
+let featuresCache = [];
+const statusEl = document.getElementById("status");
+
+function recForZip(zip, dsp=null) {
+  const a = byZip[zip] || [];
+  return dsp ? a.find(x=>x.dsp===dsp) : a[0];
+}
+function matchingRecords(zip) {
+  return (byZip[zip]||[]).filter(r => !selectedDSP || r.dsp===selectedDSP);
+}
+function featureStyle(feature) {
+  const zip = feature.properties.ZCTA5 || feature.properties.GEOID || feature.properties.BASENAME;
+  const rs = matchingRecords(zip);
+  if(!rs.length) return {color:"#94a3b8",weight:1,fillOpacity:0};
+  const c = colors[rs[0].dsp];
+  return {color:c,weight:2,fillColor:c,fillOpacity:.27};
+}
+function popupHtml(zip) {
+  const rs = matchingRecords(zip);
+  if(!rs.length) return `<div class="info"><b>ZIP ${zip}</b></div>`;
+  return rs.map(r => `<div class="info">
+    <b>${r.route} · ZIP ${r.zip}</b><br>
+    DSP: ${r.dsp}<br>
+    Sorting Code: ${r.sorting}<br>
+    City: ${r.city}<br>
+    Difficulty: ${r.difficulty}<br>
+    <span style="color:#667085">${r.reason}</span>
+  </div>`).join("<hr>");
+}
+function labelFor(zip) {
+  const rs = matchingRecords(zip);
+  if(!rs.length) return "";
+  const routes = [...new Set(rs.map(r=>r.route))];
+  return routes.join("/");
+}
+function render() {
+  if(geoLayer) map.removeLayer(geoLayer);
+  const visible = {type:"FeatureCollection",features:featuresCache.filter(f => {
+    const zip=f.properties.ZCTA5 || f.properties.GEOID || f.properties.BASENAME;
+    return matchingRecords(zip).length>0;
+  })};
+  geoLayer = L.geoJSON(visible, {
+    style: featureStyle,
+    onEachFeature: (feature, layer) => {
+      const zip=feature.properties.ZCTA5 || feature.properties.GEOID || feature.properties.BASENAME;
+      layer.bindPopup(popupHtml(zip));
+      const label=labelFor(zip);
+      if(label) layer.bindTooltip(label, {permanent:true,direction:"center",className:"route-label"});
+    }
+  }).addTo(map);
+  if(geoLayer.getLayers().length) {
+    const b=geoLayer.getBounds(); if(b.isValid()) map.fitBounds(b.pad(.04));
+  }
+  document.querySelectorAll(".dsp-btn").forEach(b=>b.classList.toggle("active", b.dataset.dsp===selectedDSP));
+}
+function buildDSPList() {
+  const box=document.getElementById("dspList");
+  dsps.forEach(d=>{
+    const count=new Set(records.filter(r=>r.dsp===d).map(r=>r.zip)).size;
+    const b=document.createElement("button"); b.className="dsp-btn"; b.dataset.dsp=d;
+    b.innerHTML=`<span class="dot" style="background:${colors[d]}"></span><span><b>${d}</b><br><small>${count} ZIP areas</small></span>`;
+    b.addEventListener("click",()=>{selectedDSP=(selectedDSP===d?null:d); render();});
+    box.appendChild(b);
+  });
+}
+buildDSPList();
+document.getElementById("showAll").onclick=()=>{selectedDSP=null; render();};
+document.getElementById("fitAll").onclick=()=>{selectedDSP=null; render();};
+document.getElementById("search").addEventListener("input", e=>{
+  const q=e.target.value.trim().toLowerCase();
+  if(!q) return;
+  const r=records.find(x=>x.zip.toLowerCase().includes(q)||x.route.toLowerCase().includes(q)||x.dsp.toLowerCase().includes(q));
+  if(!r) return;
+  selectedDSP=r.dsp; render();
+  setTimeout(()=>{
+    geoLayer.eachLayer(layer=>{
+      const z=layer.feature.properties.ZCTA5 || layer.feature.properties.GEOID || layer.feature.properties.BASENAME;
+      if(z===r.zip) { map.fitBounds(layer.getBounds().pad(.3)); layer.openPopup(); }
+    });
+  },100);
+});
+
+async function loadBoundaries() {
+  try {
+    const chunks=[];
+    for(let i=0;i<allZips.length;i+=35) chunks.push(allZips.slice(i,i+35));
+    let feats=[];
+    for(const chunk of chunks) {
+      const where = "ZCTA5 IN (" + chunk.map(z=>"'"+z+"'").join(",") + ")";
+      const p = new URLSearchParams({
+        where, outFields:"ZCTA5,GEOID,NAME,CENTLAT,CENTLON",
+        returnGeometry:"true", outSR:"4326", f:"geojson"
+      });
+      const u="https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/PUMA_TAD_TAZ_UGA_ZCTA/MapServer/1/query?"+p;
+      const resp=await fetch(u);
+      if(!resp.ok) throw new Error("Census request failed");
+      const gj=await resp.json();
+      feats=feats.concat(gj.features||[]);
+    }
+    featuresCache=feats;
+    const got=new Set(feats.map(f=>f.properties.ZCTA5 || f.properties.GEOID));
+    const missing=allZips.filter(z=>!got.has(z));
+    statusEl.textContent=`已加载 ${feats.length} 个 ZIP/ZCTA 边界` + (missing.length?`；${missing.length} 个 ZIP 无 ZCTA 边界：${missing.join(", ")}`:"。");
+    render();
+  } catch(err) {
+    statusEl.innerHTML="ZIP 边界加载失败。请确认网络可访问 Census TIGERweb；表格数据仍已嵌入网页。<br>"+err.message;
+  }
+}
+loadBoundaries();
+</script>
+</body>
+</html>
